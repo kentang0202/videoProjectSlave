@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>影片＋愛語提詞</title>
+  <link rel="icon" type="image/x-icon" href="./favicon.png">
+  <!-- Hls.js 支援 m3u8 串流 -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <style>
+    :root {
+      --bg: #e2e8f0;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --border: #cbd5e1;
+      --yt-red: #ff0000;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft JhengHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* 投影模式：全黑純粹 */
+    body.projection-mode {
+      background: #000;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    body.projection-mode.idle {
+      cursor: none;
+    }
+
+    .projection-stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .projection-stage video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* 滿版提詞層 */
+    .teleprompter-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+      transition: opacity 0.2s ease;
+    }
+
+    .teleprompter-overlay iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: transparent;
+      display: block;
+    }
+
+    /* YouTube 極簡底部控制列 */
+    .yt-controls-container {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 99999;
+      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+      padding: 0 16px 8px 16px;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      pointer-events: none;
+    }
+
+    body.projection-mode.active-ui .yt-controls-container {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .yt-progress-bar-container {
+      position: relative;
+      width: 100%;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .yt-progress-line {
+      width: 100%;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.25);
+      position: relative;
+      transition: height 0.1s ease;
+    }
+
+    .yt-progress-bar-container:hover .yt-progress-line {
+      height: 5px;
+    }
+
+    .yt-progress-played {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: var(--yt-red);
+      pointer-events: none;
+    }
+
+    .yt-progress-scrubber {
+      position: absolute;
+      top: 50%;
+      right: -6px;
+      transform: translateY(-50%) scale(0);
+      width: 13px;
+      height: 13px;
+      background: var(--yt-red);
+      border-radius: 50%;
+      transition: transform 0.1s ease;
+      pointer-events: none;
+    }
+
+    .yt-progress-bar-container:hover .yt-progress-scrubber {
+      transform: translateY(-50%) scale(1);
+    }
+
+    .yt-buttons-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      height: 40px;
+    }
+
+    .yt-left-controls, .yt-right-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .yt-btn {
+      background: transparent;
+      border: none;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 6px;
+      height: 36px;
+      border-radius: 4px;
+      outline: none;
+      transition: opacity 0.15s ease;
+    }
+
+    .yt-btn:hover {
+      opacity: 0.85;
+    }
+
+    .yt-btn svg {
+      width: 24px;
+      height: 24px;
+      fill: #ffffff;
+    }
+
+    .yt-time-display {
+      color: #ddd;
+      font-size: 0.9rem;
+      font-family: "YouTube Noto", Roboto, Arial, sans-serif;
+      user-select: none;
+      letter-spacing: 0.5px;
+    }
+
+    /* YouTube 風格：進度條懸停預覽時間 Tooltip */
+    .yt-progress-tooltip {
+      position: absolute;
+      bottom: 24px;
+      transform: translateX(-50%);
+      background: rgba(28, 28, 28, 0.9);
+      color: #ffffff;
+      padding: 4px 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border-radius: 4px;
+      pointer-events: none;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      z-index: 100000;
+    }
+
+    .yt-progress-tooltip.show {
+      opacity: 1;
+    }
+
+    /* ==========================================
+       主控台居中版面
+       ========================================== */
+    .dashboard-center-wrapper {
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 30px 16px;
+    }
+
+    .panel-container {
+      background: var(--card-bg);
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+      border: 1px solid var(--border);
+      width: 100%;
+      max-width: 580px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .panel-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #0f172a;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 12px;
+      text-align: center;
+      letter-spacing: 0.5px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #475569;
+    }
+
+    input[type="text"], select {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      color: #0f172a;
+      padding: 9px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input[type="text"]:focus, select:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      background: #ffffff;
+    }
+
+    .classic-btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button.classic-btn {
+      background: #f1f5f9;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    button.classic-btn:hover {
+      background: #e2e8f0;
+      border-color: #94a3b8;
+    }
+
+    button.classic-btn:active {
+      background: #cbd5e1;
+      transform: translateY(1px);
+    }
+
+    button.classic-btn.primary {
+      font-weight: 600;
+      background: #e0e7ff;
+      border-color: #a5b4fc;
+      color: #3730a3;
+    }
+
+    button.classic-btn.primary:hover {
+      background: #c7d2fe;
+    }
+
+    button.classic-btn.is-playing {
+      background: #dcfce7 !important;
+      border-color: #86efac !important;
+      color: #166534 !important;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #f1f5f9;
+      color: #475569;
+      width: fit-content;
+      white-space: nowrap;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .status-badge.loading .status-dot { background: #eab308; }
+    .status-badge.ready .status-dot { background: #10b981; }
+    .status-badge.error .status-dot { background: #ef4444; }
+
+    .timeline-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #f8fafc;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .time-display {
+      font-family: monospace;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #1e293b;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .play-state-indicator {
+      font-size: 0.8rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #e2e8f0;
+      color: #475569;
+    }
+    .play-state-indicator.active {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .volume-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #f8fafc;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .volume-box input[type="range"] {
+      flex: 1;
+      width: 100%;
+      cursor: pointer;
+      accent-color: #2563eb;
+    }
+
+    /* 提詞控制台入口列 */
+    .prompter-entry-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="app"></div>
+
+  <script>
+    const DEFAULT_CHANNEL = "lordeternity";
+    const BASE_PROMPTER_URL = "http://lawch.org:3000";
+
+    const syncChannel = new BroadcastChannel('worship_projection_sync');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isProjectionMode = urlParams.get('mode') === 'projection';
+
+    if (isProjectionMode) {
+      initProjectionView();
+    } else {
+      initDashboardView();
+    }
+
+    // ==========================================
+    // 1. 投影端視窗 (Projection View)
+    // ==========================================
+    function initProjectionView() {
+      document.title = "投影收看";  // 自訂投影視窗的標題名稱
+
+      document.body.classList.add('projection-mode');
+      const app = document.getElementById('app');
+      
+      const initialChannel = urlParams.get('channel') || DEFAULT_CHANNEL;
+      const initialSlaveUrl = `${BASE_PROMPTER_URL}/slave?channel=${encodeURIComponent(initialChannel)}`;
+
+      app.innerHTML = `
+        <div id="projector-root" class="projection-stage">
+          <video id="videoPlayer" playsinline></video>
+          <!-- 新增：YouTube 播放器容器 -->
+          <div id="ytEmbedWrapper" style="display: none; width: 100%; height: 100%;">
+            <div id="ytPlayerDiv"></div>
+            <div id="ytMouseShield" style="position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; z-index: 50;"></div>
+          </div>
+          
+          <!-- 提詞疊加層維持在最上層 -->
+          <div class="teleprompter-overlay" id="promptOverlay">
+            <iframe id="slaveFrame" src="${initialSlaveUrl}"></iframe>
+          </div>
+
+          <!-- YouTube 極簡風格控制列 -->
+          <div class="yt-controls-container" id="ytControls">
+            <div class="yt-progress-bar-container" id="ytProgressBar">
+              <div class="yt-progress-tooltip" id="ytProgressTooltip">0:00</div>
+              <div class="yt-progress-line">
+                <div class="yt-progress-played" id="ytProgressPlayed">
+                  <div class="yt-progress-scrubber"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="yt-buttons-row">
+              <div class="yt-left-controls">
+                <button class="yt-btn" id="ytPlayBtn" title="播放/暫停 (空白鍵)">
+                  <svg id="ytPlayIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <span class="yt-time-display" id="ytTimeDisplay">0:00 / 0:00</span>
+              </div>
+
+              <div class="yt-right-controls">
+                <button class="yt-btn" id="ytFsBtn" title="全螢幕 (f)">
+                  <svg id="ytFsIcon" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const video = document.getElementById('videoPlayer');
+      const stage = document.getElementById('projector-root');
+      const slaveFrame = document.getElementById('slaveFrame');
+
+      const ytPlayBtn = document.getElementById('ytPlayBtn');
+      const ytPlayIcon = document.getElementById('ytPlayIcon');
+      const ytProgressBar = document.getElementById('ytProgressBar');
+      const ytProgressPlayed = document.getElementById('ytProgressPlayed');
+      const ytTimeDisplay = document.getElementById('ytTimeDisplay');
+      const ytFsBtn = document.getElementById('ytFsBtn');
+      const ytFsIcon = document.getElementById('ytFsIcon');
+      const ytProgressTooltip = document.getElementById('ytProgressTooltip');
+
+      let ytPlayer = null;
+      let currentSourceType = 'hls'; // 'hls' 或 'youtube'
+      const ytEmbedWrapper = document.getElementById('ytEmbedWrapper');
+
+      // 解析 YouTube Video ID (支援一般影片、直播、短網址)
+      function extractYouTubeId(url) {
+        const regExp = /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+        const match = url.match(regExp);
+        return match ? match[1] : null;
+      }
+
+      // 初始化或載入 YouTube 影片
+      function loadYouTube(videoId) {
+        currentSourceType = 'youtube';
+        // 隱藏原生 video，顯示 YT 容器
+        video.pause();
+        video.style.display = 'none';
+        ytEmbedWrapper.style.display = 'block';
+
+        syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'loading', msg: '載入 YouTube 串流中...' } });
+
+        if (!ytPlayer) {
+          ytPlayer = new YT.Player('ytPlayerDiv', {
+            height: '100%',
+            width: '100%',
+            videoId: videoId,
+            playerVars: {
+              autoplay: 1,
+              controls: 0,        // 隱藏原生控制列，由我們的主控端與投影控制列操作
+              rel: 0,
+              modestbranding: 1,
+              playsinline: 1,
+              enablejsapi: 1,                          // 確保啟用 JS API
+              origin: window.location.origin || '*'    // 帶入當前來源
+            },
+            events: {
+              onReady: () => {
+                syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'ready', msg: 'YouTube 已就緒' } });
+                ytPlayer.playVideo();
+              },
+              onStateChange: (e) => {
+                const isPlaying = (e.data === YT.PlayerState.PLAYING);
+                updatePlayState(isPlaying);
+              }
+            }
+          });
+        } else {
+          ytPlayer.loadVideoById(videoId);
+          syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'ready', msg: 'YouTube 已就緒' } });
+        }
+      }
+
+      // 滑鼠在進度條上移動時：計算時間並跟隨滑鼠 X 座標
+      ytProgressBar.addEventListener('mousemove', (e) => {
+        if (!totalDuration || totalDuration <= 0) return;
+
+        const rect = ytProgressBar.getBoundingClientRect();
+        const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+        const hoverRatio = offsetX / rect.width;
+        const hoverTime = hoverRatio * totalDuration;
+
+        // 更新文字與位置
+        ytProgressTooltip.textContent = formatYTTime(hoverTime);
+        ytProgressTooltip.style.left = `${offsetX}px`;
+        ytProgressTooltip.classList.add('show');
+      });
+
+      // 滑鼠移出進度條時：淡出隱藏
+      ytProgressBar.addEventListener('mouseleave', () => {
+        ytProgressTooltip.classList.remove('show');
+      });
+
+      let hls = null;
+      let totalDuration = 0;
+
+      function formatYTTime(secs) {
+        if (!secs || isNaN(secs)) return "0:00";
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        if (h > 0) return `${h}:${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`;
+        return `${m}:${s < 10 ? '0' + s : s}`;
+      }
+
+      function updateTimeDisplay() {
+        ytTimeDisplay.textContent = `${formatYTTime(video.currentTime)} / ${formatYTTime(totalDuration)}`;
+      }
+
+      // 視窗內靜止 2 秒隱藏，滑鼠離開視窗立刻隱藏
+      let hideTimeout = null;
+      function hideUIImmediately() {
+        clearTimeout(hideTimeout);
+        document.body.classList.remove('active-ui');
+        document.body.classList.add('idle');
+      }
+
+      function showUI() {
+        document.body.classList.remove('idle');
+        document.body.classList.add('active-ui');
+        clearTimeout(hideTimeout);
+        hideTimeout = setTimeout(hideUIImmediately, 2000);
+      }
+
+      window.addEventListener('mousemove', showUI);
+      window.addEventListener('mouseenter', showUI);
+      window.addEventListener('mouseleave', hideUIImmediately);
+      document.addEventListener('mouseleave', hideUIImmediately);
+
+      ytPlayBtn.onclick = () => {
+        if (video.paused) video.play(); else video.pause();
+      };
+
+      function updatePlayState(isPlaying) {
+        ytPlayIcon.innerHTML = isPlaying 
+          ? '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>' 
+          : '<path d="M8 5v14l11-7z"/>';
+        syncChannel.postMessage({ action: 'PLAY_STATE_CHANGE', payload: { isPlaying } });
+      }
+
+      video.addEventListener('play', () => updatePlayState(true));
+      video.addEventListener('pause', () => updatePlayState(false));
+
+      ytProgressBar.onclick = (e) => {
+        const rect = ytProgressBar.getBoundingClientRect();
+        const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (totalDuration > 0) {
+          video.currentTime = clickRatio * totalDuration;
+          ytProgressPlayed.style.width = `${clickRatio * 100}%`;
+        }
+      };
+
+      function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+          stage.requestFullscreen().catch(err => console.warn(err));
+        } else {
+          document.exitFullscreen().catch(err => console.warn(err));
+        }
+      }
+
+      ytFsBtn.onclick = toggleFullScreen;
+      document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement) {
+          ytFsIcon.innerHTML = '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>';
+        } else {
+          ytFsIcon.innerHTML = '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>';
+        }
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F') toggleFullScreen();
+        if (e.key === ' ' || e.key === 'k') { e.preventDefault(); ytPlayBtn.click(); }
+      });
+
+      function loadStream(url) {
+        if (!url) return;
+        syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'loading', msg: '串流解析載入中...' } });
+
+        if (Hls.isSupported()) {
+          if (hls) hls.destroy();
+          hls = new Hls({ enableWorker: true, capLevelToPlayerSize: false });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+
+          hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+            syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'ready', msg: '影片已就緒，可播放' } });
+
+            const qualityLevels = data.levels.map((lvl, index) => ({
+              index: index,
+              height: lvl.height,
+              bitrate: lvl.bitrate
+            }));
+            syncChannel.postMessage({ action: 'LEVELS_LOADED', payload: { levels: qualityLevels, currentLevel: hls.currentLevel } });
+          });
+
+          hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event, data) => {
+            const audioTracks = data.audioTracks.map((trk, index) => ({
+              index: index,
+              name: trk.name || trk.lang || `音軌 ${index + 1}`
+            }));
+            syncChannel.postMessage({
+              action: 'AUDIO_TRACKS_LOADED',
+              payload: { tracks: audioTracks, currentTrack: hls.audioTrack >= 0 ? hls.audioTrack : 0 }
+            });
+          });
+
+          hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+            syncChannel.postMessage({ action: 'AUDIO_TRACK_SWITCHED', payload: { trackIndex: data.id } });
+          });
+
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'error', msg: `載入錯誤: ${data.details}` } });
+            }
+          });
+
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+          video.onloadedmetadata = () => {
+            syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'ready', msg: '影片已就緒，可播放' } });
+          };
+          video.onerror = () => {
+            syncChannel.postMessage({ action: 'STATUS_UPDATE', payload: { status: 'error', msg: '影片載入失敗' } });
+          };
+        }
+      }
+
+      syncChannel.onmessage = (event) => {
+        const { action, payload } = event.data;
+        switch (action) {
+          // 修改原有的 switch 分支：
+          case 'LOAD_STREAM':
+            const ytId = extractYouTubeId(payload.url);
+            if (ytId) {
+              loadYouTube(ytId);
+            } else {
+              currentSourceType = 'hls';
+              if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+              ytEmbedWrapper.style.display = 'none';
+              video.style.display = 'block';
+              loadStream(payload.url);
+            }
+            break;
+
+          case 'PLAY_PAUSE_TOGGLE':
+            if (currentSourceType === 'youtube' && ytPlayer) {
+              const state = ytPlayer.getPlayerState();
+              if (state === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+              else ytPlayer.playVideo();
+            } else {
+              if (video.paused) video.play(); else video.pause();
+            }
+            break;
+
+          case 'SEEK':
+            if (currentSourceType === 'youtube' && ytPlayer) {
+              ytPlayer.seekTo(payload.time, true);
+            } else {
+              video.currentTime = payload.time;
+            }
+            break;
+
+          case 'JUMP':
+            if (currentSourceType === 'youtube' && ytPlayer) {
+              const curr = ytPlayer.getCurrentTime() || 0;
+              ytPlayer.seekTo(Math.max(0, curr + payload.offset), true);
+            } else {
+              video.currentTime = Math.max(0, video.currentTime + payload.offset);
+            }
+            break;
+          
+          case 'SET_QUALITY':
+            if (hls) hls.currentLevel = payload.levelIndex;
+            break;
+          case 'SET_AUDIO_TRACK':
+            if (hls) hls.audioTrack = payload.trackIndex;
+            break;
+          case 'SET_VOLUME':
+            video.volume = payload.volume;
+            video.muted = payload.muted;
+            break;
+          case 'UPDATE_CHANNEL':
+            slaveFrame.src = `${BASE_PROMPTER_URL}/slave?channel=${encodeURIComponent(payload.channel)}`;
+            break;
+        }
+      };
+
+      setInterval(() => {
+        if (currentSourceType === 'youtube' && ytPlayer && ytPlayer.getCurrentTime) {
+          const ytCur = ytPlayer.getCurrentTime() || 0;
+          const ytDur = ytPlayer.getDuration() || 0; // 若為直播，duration 通常為當前緩衝時長或 0
+          
+          totalDuration = ytDur;
+          video.currentTime = ytCur; // 保持變數一致
+          updateTimeDisplay();
+          
+          if (totalDuration > 0) {
+            ytProgressPlayed.style.width = `${(ytCur / totalDuration) * 100}%`;
+          }
+
+          syncChannel.postMessage({
+            action: 'TIME_UPDATE',
+            payload: {
+              currentTime: ytCur,
+              duration: totalDuration,
+              isPlaying: ytPlayer.getPlayerState() === YT.PlayerState.PLAYING
+            }
+          });
+        } else if (!video.paused && !video.ended) {
+          // 原本的 HLS 同步邏輯維持不變
+          totalDuration = video.duration || 0;
+          updateTimeDisplay();
+          if (totalDuration > 0) {
+            ytProgressPlayed.style.width = `${(video.currentTime / totalDuration) * 100}%`;
+          }
+          syncChannel.postMessage({
+            action: 'TIME_UPDATE',
+            payload: {
+              currentTime: video.currentTime,
+              duration: totalDuration,
+              isPlaying: !video.paused
+            }
+          });
+        }
+      }, 500);
+
+      // 當投影視窗被關閉時，通知主控端秒數與狀態歸零
+      window.addEventListener('pagehide', () => {
+        syncChannel.postMessage({ action: 'PROJECTION_CLOSED' });
+      });
+    }
+
+    // ==========================================
+    // 2. 主控台視窗 (Dashboard View - 全體致中版)
+    // ==========================================
+    function initDashboardView() {
+      const app = document.getElementById('app');
+      let currentChannel = DEFAULT_CHANNEL;
+      let isMuted = false;
+      let currentVolume = 1.0;
+
+      app.innerHTML = `
+        <div class="dashboard-center-wrapper">
+          <div class="panel-container">
+            <div class="panel-title">影片提詞疊字＜主控端＞</div>
+
+            <!-- 1. 載入影片 (狀態在上方) -->
+            <div class="form-group">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label>影片串流網址 (支援 .m3u8 .mp4 和 YouTube連結)</label>
+                <div id="statusBadge" class="status-badge">
+                  <span class="status-dot"></span>
+                  <span id="statusText">尚未載入影片</span>
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="streamUrl" placeholder="請貼上 master.m3u8、playlist.m3u8 或 YouTube 影片/直播網址" style="flex: 1;">
+                <button id="loadBtn" class="classic-btn">載入影片</button>
+              </div>
+            </div>
+
+            <!-- 2. 時間軸 -->
+            <div class="timeline-container">
+              <div class="time-display">
+                <span id="currentTimeText">00:00:00</span>
+                <span id="playStateBadge" class="play-state-indicator">已暫停</span>
+                <span id="durationText">00:00:00</span>
+              </div>
+              <input type="range" id="seekSlider" min="0" max="100" value="0" step="0.2" style="width: 100%; cursor: pointer; accent-color: #2563eb;">
+            </div>
+
+            <!-- 3. 控制按鈕群 -->
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <div class="classic-btn-row">
+                <button id="openProjectionBtn" class="classic-btn primary">收看 (開啟投影視窗)</button>
+                <button id="playPauseBtn" class="classic-btn primary">▶ 播放</button>
+              </div>
+
+              <div class="classic-btn-row">
+                <button class="classic-btn" data-jump="-10">倒退10秒</button>
+                <button class="classic-btn" data-jump="-5">倒退5秒</button>
+                <button class="classic-btn" data-jump="-2">倒退2秒</button>
+                <button class="classic-btn" data-jump="2">前進2秒</button>
+                <button class="classic-btn" data-jump="5">前進5秒</button>
+                <button class="classic-btn" data-jump="10">前進10秒</button>
+              </div>
+            </div>
+
+            <!-- 4. 音軌選擇 與 畫質選擇 -->
+            <div style="display: flex; gap: 12px;">
+              <div class="form-group" style="flex: 1;">
+                <label>音軌選擇</label>
+                <select id="audioSelect">
+                  <option value="0">預設音軌</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label>畫質選擇</label>
+                <select id="qualitySelect">
+                  <option value="-1">自動 (Auto ABR)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 5. 音量調整 (滿版滑桿) -->
+            <div class="form-group">
+              <label>音量調整 (<span id="volumePercent">100%</span>)</label>
+              <div class="volume-box">
+                <button id="muteBtn" class="classic-btn" style="min-width: 105px; padding: 6px 12px; font-size: 0.95rem; text-align: center;">🔊 靜音</button>
+                <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1">
+              </div>
+            </div>
+
+            <!-- 6. 提詞控制台入口列 (含小標題) -->
+            <div class="prompter-entry-box">
+              <div style="display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;">
+                <span style="font-size: 0.95rem; font-weight: 700; color: #1e40af;">愛語提詞系統</span>
+                <span style="font-size: 0.8rem; color: #d97706; background: #fef3c7; border: 1px solid #fde68a; padding: 1px 7px; border-radius: 4px; font-weight: 600;">
+                  疊字建議：中講堂＜字體加大＞按 2~3 下
+                </span>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <a id="openPrompterBtn"
+                   href="${BASE_PROMPTER_URL}/master?channel=${encodeURIComponent(DEFAULT_CHANNEL)}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="classic-btn primary"
+                   style="background: #2563eb; color: #fff; border-color: #1d4ed8; padding: 6px 25px; min-width: 200px; text-align: center; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;">
+                  新分頁開啟&lt;控制端&gt; ↗
+                </a>
+
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <label for="channelInput" style="font-size: 0.9rem; color: #334155; white-space: nowrap; margin: 0;">
+                    頻道 channel =
+                  </label>
+                  <input type="text" id="channelInput" value="${DEFAULT_CHANNEL}" style="width: 140px; padding: 6px 10px;" placeholder="lordeternity">
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      `;
+
+      const openProjectionBtn = document.getElementById('openProjectionBtn');
+      const channelInput = document.getElementById('channelInput');
+      const openPrompterBtn = document.getElementById('openPrompterBtn');
+
+      const streamUrlInput = document.getElementById('streamUrl');
+      const loadBtn = document.getElementById('loadBtn');
+      const statusBadge = document.getElementById('statusBadge');
+      const statusText = document.getElementById('statusText');
+
+      const qualitySelect = document.getElementById('qualitySelect');
+      const audioSelect = document.getElementById('audioSelect');
+      const playPauseBtn = document.getElementById('playPauseBtn');
+      const playStateBadge = document.getElementById('playStateBadge');
+      const seekSlider = document.getElementById('seekSlider');
+      const currentTimeText = document.getElementById('currentTimeText');
+      const durationText = document.getElementById('durationText');
+
+      const muteBtn = document.getElementById('muteBtn');
+      const volumeSlider = document.getElementById('volumeSlider');
+      const volumePercent = document.getElementById('volumePercent');
+
+      let currentVideoTime = 0;
+      let totalDuration = 0;
+
+      function formatTime(secs) {
+        if (!secs || isNaN(secs)) return "00:00:00";
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        return [h, m, s].map(v => v < 10 ? '0' + v : v).join(':');
+      }
+
+      function setPlayStateUI(isPlaying) {
+        if (isPlaying) {
+          playPauseBtn.textContent = '⏸ 暫停';
+          playPauseBtn.classList.add('is-playing');
+          playStateBadge.textContent = '播放中';
+          playStateBadge.classList.add('active');
+        } else {
+          playPauseBtn.textContent = '▶ 播放';
+          playPauseBtn.classList.remove('is-playing');
+          playStateBadge.textContent = '已暫停';
+          playStateBadge.classList.remove('active');
+        }
+      }
+
+      function sendVolumeUpdate() {
+        syncChannel.postMessage({
+          action: 'SET_VOLUME',
+          payload: { volume: currentVolume, muted: isMuted }
+        });
+      }
+
+      volumeSlider.oninput = (e) => {
+        currentVolume = parseFloat(e.target.value);
+        volumePercent.textContent = `${Math.round(currentVolume * 100)}%`;
+        if (currentVolume === 0) {
+          isMuted = true;
+          muteBtn.textContent = '🔇 取消靜音';
+        } else {
+          isMuted = false;
+          muteBtn.textContent = '🔊 靜音';
+        }
+        sendVolumeUpdate();
+      };
+
+      muteBtn.onclick = () => {
+        isMuted = !isMuted;
+        muteBtn.textContent = isMuted ? '🔇 取消靜音' : '🔊 靜音';
+        volumePercent.textContent = isMuted ? '靜音' : `${Math.round(currentVolume * 100)}%`;
+        sendVolumeUpdate();
+      };
+
+      // 動態更新 <a> 連結與投影端頻道
+      function updatePrompterLink(notifyProjection = false) {
+        const val = channelInput.value.trim() || DEFAULT_CHANNEL;
+        openPrompterBtn.href = `${BASE_PROMPTER_URL}/master?channel=${encodeURIComponent(val)}`;
+
+        if (notifyProjection && val !== currentChannel) {
+          currentChannel = val;
+          syncChannel.postMessage({ action: 'UPDATE_CHANNEL', payload: { channel: currentChannel } });
+        }
+      }
+
+      channelInput.addEventListener('input', () => updatePrompterLink(false));
+      channelInput.addEventListener('change', () => updatePrompterLink(true));
+      openPrompterBtn.addEventListener('click', () => updatePrompterLink(true));
+
+
+      openProjectionBtn.onclick = () => {
+        window.open(
+          `${window.location.pathname}?mode=projection&channel=${encodeURIComponent(currentChannel)}`,
+          'WorshipProjectionWindow',
+          'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
+        );
+        setTimeout(() => {
+          if (streamUrlInput.value) {
+            syncChannel.postMessage({ action: 'LOAD_STREAM', payload: { url: streamUrlInput.value } });
+          }
+          sendVolumeUpdate();
+        }, 1000);
+      };
+
+      loadBtn.onclick = () => {
+        const url = streamUrlInput.value.trim();
+        if (!url) return alert('請輸入影片 URL');
+        statusBadge.className = 'status-badge loading';
+        statusText.textContent = '發送載入請求...';
+        syncChannel.postMessage({ action: 'LOAD_STREAM', payload: { url } });
+      };
+
+      qualitySelect.onchange = () => {
+        const levelIndex = parseInt(qualitySelect.value, 10);
+        syncChannel.postMessage({ action: 'SET_QUALITY', payload: { levelIndex } });
+      };
+
+      audioSelect.onchange = () => {
+        const trackIndex = parseInt(audioSelect.value, 10);
+        syncChannel.postMessage({ action: 'SET_AUDIO_TRACK', payload: { trackIndex } });
+      };
+
+      playPauseBtn.onclick = () => {
+        syncChannel.postMessage({ action: 'PLAY_PAUSE_TOGGLE' });
+      };
+
+      document.querySelectorAll('button[data-jump]').forEach(btn => {
+        btn.onclick = () => {
+          const offset = parseFloat(btn.getAttribute('data-jump'));
+          syncChannel.postMessage({ action: 'JUMP', payload: { offset } });
+        };
+      });
+
+      seekSlider.oninput = () => {
+        const targetTime = (seekSlider.value / 100) * totalDuration;
+        syncChannel.postMessage({ action: 'SEEK', payload: { time: targetTime } });
+      };
+
+      syncChannel.onmessage = (event) => {
+        const { action, payload } = event.data;
+        if (action === 'TIME_UPDATE') {
+          currentVideoTime = payload.currentTime;
+          totalDuration = payload.duration;
+          currentTimeText.textContent = formatTime(payload.currentTime);
+          durationText.textContent = formatTime(payload.duration);
+          if (payload.duration > 0) {
+            seekSlider.value = (payload.currentTime / payload.duration) * 100;
+          }
+          if (payload.isPlaying !== undefined) {
+            setPlayStateUI(payload.isPlaying);
+          }
+        } else if (action === 'PLAY_STATE_CHANGE') {
+          setPlayStateUI(payload.isPlaying);
+        } else if (action === 'STATUS_UPDATE') {
+          statusBadge.className = `status-badge ${payload.status}`;
+          statusText.textContent = payload.msg;
+        } else if (action === 'LEVELS_LOADED') {
+          qualitySelect.innerHTML = '<option value="-1">自動 (Auto ABR)</option>';
+          payload.levels.forEach(lvl => {
+            const opt = document.createElement('option');
+            opt.value = lvl.index;
+            const res = lvl.height ? `${lvl.height}p` : '未知解析度';
+            const mbps = lvl.bitrate ? ` (${(lvl.bitrate / 1000000).toFixed(1)} Mbps)` : '';
+            opt.textContent = `${res}${mbps}`;
+            qualitySelect.appendChild(opt);
+          });
+          qualitySelect.value = payload.currentLevel;
+        } else if (action === 'AUDIO_TRACKS_LOADED') {
+          audioSelect.innerHTML = '';
+          payload.tracks.forEach(trk => {
+            const opt = document.createElement('option');
+            opt.value = trk.index;
+            opt.textContent = trk.name;
+            audioSelect.appendChild(opt);
+          });
+          audioSelect.value = payload.currentTrack;
+        } else if (action === 'AUDIO_TRACK_SWITCHED') {
+          audioSelect.value = payload.trackIndex;
+
+        } else if (action === 'PROJECTION_CLOSED') {
+          // 秒數重置為 00:00:00
+          currentVideoTime = 0;
+          totalDuration = 0;
+          currentTimeText.textContent = "00:00:00";
+          durationText.textContent = "00:00:00";
+          seekSlider.value = 0;
+          
+          // 播放狀態切回已暫停
+          setPlayStateUI(false);
+          
+          // 狀態提示更新
+          statusBadge.className = 'status-badge';
+          statusText.textContent = '投影視窗已關閉';
+        }
+      };
+    }
+  </script>
+</body>
+</html>
